@@ -1,61 +1,64 @@
+// src/App.tsx
 import React, { useState, useEffect, useRef } from "react";
 
-// Web Speech API를 위한 인터페이스 정의 (브라우저 호환성)
-const SpeechRecognition =
-  window.SpeechRecognition || window.webkitSpeechRecognition;
-let recognition;
-if (SpeechRecognition) {
-  recognition = new SpeechRecognition();
-  recognition.continuous = true; // 연속적인 음성 인식
-  recognition.lang = "ko-KR"; // 한국어 설정
-  recognition.interimResults = true; // 중간 결과 표시
+// 전역 window 타입 확장
+declare global {
+  interface Window {
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
+  }
 }
 
-// 동적으로 폰트 크기를 조절하는 커스텀 훅
+// Web Speech API 호환 처리
+const SpeechRecognition =
+  (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+let recognition: any = null;
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.continuous = true; // 연속 인식
+  recognition.lang = "ko-KR"; // 한국어
+  recognition.interimResults = true; // 중간 결과 허용
+}
+
+// 글자 크기를 컨테이너에 맞춰 자동 조절하는 훅
 const useFitText = () => {
-  const ref = useRef(null);
-  const [fontSize, setFontSize] = useState(100); // 초기 폰트 크기
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [fontSize, setFontSize] = useState(100);
 
   useEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+
     const resizeObserver = new ResizeObserver(() => {
-      if (!ref.current || !ref.current.parentElement) return;
+      if (!el.parentElement) return;
+      const parent = el.parentElement;
+      let currentFontSize = 150;
+      el.style.fontSize = `${currentFontSize}px`;
 
-      const parent = ref.current.parentElement;
-      const parentWidth = parent.clientWidth;
-      const parentHeight = parent.clientHeight;
-
-      let currentFontSize = 150; // 최대 폰트 크기부터 시작
-      ref.current.style.fontSize = `${currentFontSize}px`;
-
-      // 텍스트가 부모 요소를 넘치지 않을 때까지 폰트 크기를 줄임
       while (
-        (ref.current.scrollWidth > parentWidth ||
-          ref.current.scrollHeight > parentHeight) &&
-        currentFontSize > 10 // 최소 폰트 크기
+        (el.scrollWidth > parent.clientWidth ||
+          el.scrollHeight > parent.clientHeight) &&
+        currentFontSize > 10
       ) {
         currentFontSize--;
-        ref.current.style.fontSize = `${currentFontSize}px`;
+        el.style.fontSize = `${currentFontSize}px`;
       }
       setFontSize(currentFontSize);
     });
 
-    if (ref.current) {
-      resizeObserver.observe(ref.current);
-      resizeObserver.observe(ref.current.parentElement);
-    }
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [ref]);
+    resizeObserver.observe(el);
+    if (el.parentElement) resizeObserver.observe(el.parentElement);
+    return () => resizeObserver.disconnect();
+  }, []);
 
   return { ref, style: { fontSize: `${fontSize}px` } };
 };
 
-// 최신 메시지를 전체 화면으로 보여주는 컴포넌트
-const FullScreenTextViewer = ({ text }) => {
+type FullScreenTextViewerProps = { text: string };
+const FullScreenTextViewer: React.FC<FullScreenTextViewerProps> = ({
+  text,
+}) => {
   const { ref, style } = useFitText();
-
   return (
     <div className="flex-grow w-full flex items-center justify-center p-4 overflow-hidden">
       <div
@@ -69,12 +72,17 @@ const FullScreenTextViewer = ({ text }) => {
   );
 };
 
-// 대화 기록을 표시하는 컴포넌트
-const ConversationHistory = ({ messages }) => {
-  const historyEndRef = useRef(null);
+interface Message {
+  text: string;
+  timestamp: number;
+}
+type ConversationHistoryProps = { messages: Message[] };
+const ConversationHistory: React.FC<ConversationHistoryProps> = ({
+  messages,
+}) => {
+  const historyEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // 새 메시지가 추가되면 맨 아래로 스크롤
     historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
@@ -100,14 +108,12 @@ const ConversationHistory = ({ messages }) => {
   );
 };
 
-// 메인 앱 컴포넌트
 export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [latestTranscript, setLatestTranscript] = useState("");
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [error, setError] = useState("");
 
-  // 음성 인식 이벤트 핸들러 설정
   useEffect(() => {
     if (!recognition) {
       setError(
@@ -116,8 +122,7 @@ export default function App() {
       return;
     }
 
-    // 음성 인식 결과가 나올 때마다 호출
-    recognition.onresult = (event) => {
+    recognition.onresult = (event: any) => {
       let interimTranscript = "";
       let finalTranscript = "";
 
@@ -131,23 +136,20 @@ export default function App() {
       setLatestTranscript(finalTranscript + interimTranscript);
     };
 
-    // 음성 인식이 종료될 때 호출
     recognition.onend = () => {
       setIsListening(false);
-      // 최종 텍스트가 있을 경우 메시지 목록에 추가
       setLatestTranscript((prev) => {
         if (prev.trim()) {
-          setMessages((currentMessages) => [
-            ...currentMessages,
+          setMessages((msgs) => [
+            ...msgs,
             { text: prev.trim(), timestamp: Date.now() },
           ]);
         }
-        return ""; // 현재 텍스트 초기화
+        return "";
       });
     };
 
-    // 에러 처리
-    recognition.onerror = (event) => {
+    recognition.onerror = (event: any) => {
       if (event.error === "no-speech") {
         setError("음성이 감지되지 않았습니다. 다시 시도해주세요.");
       } else {
@@ -182,19 +184,17 @@ export default function App() {
         {error && <p className="text-red-400 text-center my-2">{error}</p>}
       </main>
 
-      <footer className="p-4 w-full">
-        {/* 녹음 중 시각적 피드백 */}
+      <footer className="p-4 w-full relative">
         {isListening && (
-          <div className="absolute bottom-0 left-0 w-full h-full border-8 border-green-500 rounded-lg box-border animate-pulse pointer-events-none"></div>
+          <div className="absolute bottom-0 left-0 w-full h-full border-8 border-green-500 rounded-lg animate-pulse pointer-events-none"></div>
         )}
         <button
           onClick={toggleListening}
-          className={`w-full max-w-md mx-auto py-6 px-6 text-3xl font-bold rounded-xl transition-all duration-300 ease-in-out transform active:scale-95 flex items-center justify-center
-            ${
-              isListening
-                ? "bg-gray-600 hover:bg-gray-700"
-                : "bg-green-600 hover:bg-green-700"
-            }`}
+          className={`w-full max-w-md mx-auto py-6 px-6 text-3xl font-bold rounded-xl transition duration-300 ease-in-out transform active:scale-95 flex items-center justify-center ${
+            isListening
+              ? "bg-gray-600 hover:bg-gray-700"
+              : "bg-green-600 hover:bg-green-700"
+          }`}
         >
           {isListening ? (
             <>
@@ -209,12 +209,12 @@ export default function App() {
                   r="10"
                   stroke="currentColor"
                   strokeWidth="4"
-                ></circle>
+                />
                 <path
                   className="opacity-75"
                   fill="currentColor"
                   d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
+                />
               </svg>
               <span>대화 듣는 중...</span>
             </>
@@ -223,17 +223,11 @@ export default function App() {
           )}
         </button>
       </footer>
+
       <style>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: #374151; /* bg-gray-700 */
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #10B981; /* bg-green-500 */
-          border-radius: 4px;
-        }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #374151; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #10B981; border-radius: 4px; }
       `}</style>
     </div>
   );
